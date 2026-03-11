@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Scanner Web-App</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #1a1a1a; color: white; overflow: hidden; }
+        
+        /* Container für die verschiedenen Ansichten */
+        #camera-view, #processing-view, #model-view { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; }
+        
+        /* Kamera Ansicht */
+        #camera-view { display: flex; flex-direction: column; justify-content: space-between; align-items: center; }
+        #video-element { width: 100%; height: 100%; object-fit: cover; position: absolute; z-index: -1; }
+        .top-bar { width: 100%; padding: 20px; text-align: center; background: linear-gradient(rgba(0,0,0,0.7), transparent); font-weight: bold; }
+        .bottom-controls { width: 100%; padding: 30px; display: flex; justify-content: space-around; align-items: center; background: linear-gradient(transparent, rgba(0,0,0,0.8)); position: absolute; bottom: 0; }
+        
+        .capture-btn { width: 70px; height: 70px; background-color: #ff2a5f; border-radius: 50%; border: 4px solid white; cursor: pointer; }
+        .capture-btn:active { transform: scale(0.95); }
+        .generate-btn { padding: 10px 20px; background-color: #333; border: none; border-radius: 8px; color: white; cursor: pointer; font-size: 16px; }
+        
+        /* Verarbeitungs-Ansicht (Popup wie bei Scaniverse) */
+        #processing-view { background-color: rgba(40, 40, 40, 0.9); display: none; justify-content: center; align-items: center; }
+        .process-box { background-color: #111; padding: 30px; border-radius: 12px; width: 300px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .progress-bar-container { width: 100%; background-color: #333; height: 4px; margin-top: 20px; border-radius: 2px; }
+        .progress-bar { width: 0%; height: 100%; background-color: #ff2a5f; transition: width 0.3s; }
+        .status-text { margin-top: 10px; font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; display: flex; justify-content: space-between;}
+        
+        /* 3D Modell Ansicht */
+        #model-view { display: none; flex-direction: column; }
+        #3d-canvas { flex-grow: 1; width: 100%; }
+        .model-controls { padding: 20px; background-color: #111; display: flex; justify-content: center; gap: 15px; }
+        .btn-primary { background-color: #ff2a5f; color: white; border: none; padding: 12px 30px; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold;}
+        .btn-secondary { background-color: #444; color: white; border: none; padding: 12px 30px; border-radius: 8px; font-size: 16px; cursor: pointer; }
+        
+        #image-count { position: absolute; top: 20px; right: 20px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="camera-view" style="display: flex;">
+        <video id="video-element" autoplay playsinline></video>
+        <div class="top-bar">BEREIT FÜR SCAN</div>
+        <div id="image-count">Bilder: <span id="count">0</span></div>
+        <div class="bottom-controls">
+            <button class="generate-btn" onclick="startProcessing()">3D Modell erstellen</button>
+            <div class="capture-btn" onclick="captureImage()"></div>
+            <div style="width: 100px;"></div> </div>
+    </div>
+
+    <div id="processing-view">
+        <div class="process-box">
+            <h3 style="margin-top: 0;">Scan wird verarbeitet</h3>
+            <p style="font-size: 14px; color: #ccc;">App während der Verarbeitung nicht schließen</p>
+            
+            <div class="status-text">
+                <span id="process-step">TIEFE WIRD BERECHNET</span>
+                <span id="process-percent">0%</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="model-view">
+        <div id="3d-canvas"></div>
+        <div class="model-controls">
+            <button class="btn-secondary" onclick="resetApp()">Neuer Scan</button>
+            <button class="btn-primary">Speichern</button>
+        </div>
+    </div>
+
+    <script>
+        let imageCount = 0;
+        let stream = null;
+
+        // Kamera starten
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                document.getElementById('video-element').srcObject = stream;
+            } catch (err) {
+                console.error("Fehler beim Kamerazugriff:", err);
+                alert("Kamerazugriff wurde verweigert oder ist nicht verfügbar.");
+            }
+        }
+
+        startCamera();
+
+        // Bild "aufnehmen" (simuliert)
+        function captureImage() {
+            imageCount++;
+            document.getElementById('count').innerText = imageCount;
+            // Visuelles Feedback
+            document.body.style.backgroundColor = "white";
+            setTimeout(() => document.body.style.backgroundColor = "#1a1a1a", 50);
+        }
+
+        // Verarbeitung starten
+        function startProcessing() {
+            if (imageCount === 0) {
+                alert("Bitte nimm zuerst ein paar Bilder auf!");
+                return;
+            }
+
+            document.getElementById('camera-view').style.display = 'none';
+            document.getElementById('processing-view').style.display = 'flex';
+
+            let progress = 0;
+            let stepText = document.getElementById('process-step');
+            let percentText = document.getElementById('process-percent');
+            let bar = document.getElementById('progress-bar');
+
+            // Simulierter Fortschritt
+            let interval = setInterval(() => {
+                progress += Math.floor(Math.random() * 10) + 2; // Zufälliger Fortschritt
+                if (progress >= 100) progress = 100;
+
+                bar.style.width = progress + '%';
+                percentText.innerText = progress + '%';
+
+                if (progress > 40) stepText.innerText = "PUNKTWOLKE WIRD ERSTELLT";
+                if (progress > 70) stepText.innerText = "MESH WIRD ERSTELLT";
+                if (progress > 90) stepText.innerText = "TEXTURIERUNG...";
+
+                if (progress >= 100) {
+                    clearInterval(interval);
+                    setTimeout(show3DModel, 500);
+                }
+            }, 500);
+        }
+
+        // 3D Viewer anzeigen (Three.js)
+        function show3DModel() {
+            document.getElementById('processing-view').style.display = 'none';
+            document.getElementById('model-view').style.display = 'flex';
+            
+            // Three.js Setup
+            const container = document.getElementById('3d-canvas');
+            if(container.children.length > 0) return; // Verhindert doppeltes Laden
+
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x333333);
+
+            const camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(renderer.domElement);
+
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            // Licht
+            const light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(5, 5, 5);
+            scene.add(light);
+            scene.add(new THREE.AmbientLight(0x404040));
+
+            // Platzhalter-Modell (Da wir ohne Server kein echtes aus deinen Bildern berechnen können)
+            // Hier nutzen wir einen abstrakten Knoten als Beispiel für das "gescannte Objekt"
+            const geometry = new THREE.TorusKnotGeometry(10, 3, 100, 16);
+            const material = new THREE.MeshStandardMaterial({ 
+                color: 0x00aaff, 
+                wireframe: true // Ähnlich wie der "Mesh wird erstellt" Look
+            });
+            const placeholderModel = new THREE.Mesh(geometry, material);
+            scene.add(placeholderModel);
+
+            camera.position.z = 30;
+
+            // Animations-Schleife
+            function animate() {
+                requestAnimationFrame(animate);
+                placeholderModel.rotation.x += 0.005;
+                placeholderModel.rotation.y += 0.005;
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            animate();
+
+            // Fenstergröße anpassen
+            window.addEventListener('resize', () => {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            });
+        }
+
+        // App zurücksetzen
+        function resetApp() {
+            imageCount = 0;
+            document.getElementById('count').innerText = imageCount;
+            document.getElementById('model-view').style.display = 'none';
+            document.getElementById('camera-view').style.display = 'flex';
+            
+            // Progressbar zurücksetzen
+            document.getElementById('progress-bar').style.width = '0%';
+            document.getElementById('process-step').innerText = 'TIEFE WIRD BERECHNET';
+            document.getElementById('process-percent').innerText = '0%';
+        }
+    </script>
+</body>
+</html>
